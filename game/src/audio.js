@@ -1,178 +1,58 @@
-// Procedural sound: every effect is synthesised with WebAudio, so the game ships
-// no audio files and makes no network request. One shared AudioContext, lazily
-// created on the first user gesture (browsers block audio before that).
-// Each effect is a short function: noise through a filter for shots and booms,
-// a sine blip for UI, a two-tone beep for the planted charge.
-export function createAudio() {
-  let context = null;
-  let master = null;
-  let noiseBuffer = null;
-
-  function ensure() {
-    if (context) return true;
+// audio.js — WebAudio synth sounds only (no audio files, no network).
+export class Sfx {
+  constructor() {
+    this.ctx = null; this.master = null;
+  }
+  ensure() {
+    if (this.ctx) { if (this.ctx.state === 'suspended') this.ctx.resume(); return; }
     try {
       const AC = window.AudioContext || window.webkitAudioContext;
-      if (!AC) return false;
-      context = new AC();
-      master = context.createGain();
-      master.gain.value = 0.5;
-      master.connect(context.destination);
-      const length = Math.floor(context.sampleRate * 0.5);
-      noiseBuffer = context.createBuffer(1, length, context.sampleRate);
-      const data = noiseBuffer.getChannelData(0);
-      for (let i = 0; i < length; i += 1) data[i] = Math.random() * 2 - 1;
-    } catch {
-      return false;
-    }
-    return true;
+      this.ctx = new AC();
+      this.master = this.ctx.createGain();
+      this.master.gain.value = 0.35;
+      this.master.connect(this.ctx.destination);
+    } catch { this.ctx = null; }
   }
-
-  function unlock() {
-    if (ensure() && context.state === 'suspended') context.resume().catch(() => {});
+  tone(freq, dur, type, vol, slideTo) {
+    if (!this.ctx) return;
+    const t0 = this.ctx.currentTime;
+    const o = this.ctx.createOscillator();
+    const g = this.ctx.createGain();
+    o.type = type; o.frequency.setValueAtTime(freq, t0);
+    if (slideTo) o.frequency.exponentialRampToValueAtTime(Math.max(20, slideTo), t0 + dur);
+    g.gain.setValueAtTime(vol, t0);
+    g.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
+    o.connect(g); g.connect(this.master);
+    o.start(t0); o.stop(t0 + dur + 0.02);
   }
-
-  function noise(when, duration, filterFreq, gainValue, type = 'lowpass') {
-    if (!ensure()) return;
-    const source = context.createBufferSource();
-    source.buffer = noiseBuffer;
-    source.loop = true;
-    const filter = context.createBiquadFilter();
-    filter.type = type;
-    filter.frequency.value = filterFreq;
-    const gain = context.createGain();
-    gain.gain.setValueAtTime(gainValue, when);
-    gain.gain.exponentialRampToValueAtTime(0.001, when + duration);
-    source.connect(filter);
-    filter.connect(gain);
-    gain.connect(master);
-    source.start(when);
-    source.stop(when + duration + 0.02);
+  noise(dur, vol, low) {
+    if (!this.ctx) return;
+    const t0 = this.ctx.currentTime;
+    const len = Math.floor(this.ctx.sampleRate * dur);
+    const buf = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / len);
+    const src = this.ctx.createBufferSource(); src.buffer = buf;
+    const f = this.ctx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = low || 2400;
+    const g = this.ctx.createGain(); g.gain.value = vol;
+    src.connect(f); f.connect(g); g.connect(this.master);
+    src.start(t0);
   }
-
-  function tone(when, freq, duration, gainValue, type = 'sine', slideTo = 0) {
-    if (!ensure()) return;
-    const osc = context.createOscillator();
-    osc.type = type;
-    osc.frequency.setValueAtTime(freq, when);
-    if (slideTo > 0) osc.frequency.exponentialRampToValueAtTime(slideTo, when + duration);
-    const gain = context.createGain();
-    gain.gain.setValueAtTime(gainValue, when);
-    gain.gain.exponentialRampToValueAtTime(0.001, when + duration);
-    osc.connect(gain);
-    gain.connect(master);
-    osc.start(when);
-    osc.stop(when + duration + 0.02);
+  shot(kind) {
+    this.ensure();
+    if (kind === 'marksman') { this.noise(0.22, 0.9, 1400); this.tone(140, 0.18, 'square', 0.25, 55); }
+    else if (kind === 'shotgun') { this.noise(0.18, 0.85, 1100); this.tone(110, 0.14, 'square', 0.3, 45); }
+    else if (kind === 'smg') { this.noise(0.07, 0.5, 3200); this.tone(220, 0.06, 'square', 0.14, 90); }
+    else if (kind === 'pistol') { this.noise(0.09, 0.6, 2600); this.tone(190, 0.08, 'square', 0.18, 70); }
+    else { this.noise(0.12, 0.7, 2200); this.tone(160, 0.1, 'square', 0.22, 60); }
   }
-
-  function now() {
-    return ensure() ? context.currentTime : 0;
-  }
-
-  // weapon: 'rifle' | 'smg' | 'shotgun' | 'marksman' | 'pistol'. A crack (high
-  // noise) plus a body thump (low noise); the shotgun adds a longer tail.
-  function shot(weapon) {
-    if (!ensure()) return;
-    const t = now();
-    const table = {
-      rifle: [2600, 0.32, 0.11],
-      smg: [3200, 0.24, 0.07],
-      shotgun: [1500, 0.5, 0.22],
-      marksman: [2000, 0.42, 0.2],
-      pistol: [3000, 0.26, 0.08],
-    };
-    const [freq, gain, dur] = table[weapon] || table.rifle;
-    noise(t, dur, freq, gain);
-    noise(t, dur * 0.8, 320, gain * 0.8);
-  }
-
-  function distantShot() {
-    if (!ensure()) return;
-    noise(now(), 0.09, 900, 0.1);
-  }
-
-  function reload() {
-    if (!ensure()) return;
-    const t = now();
-    tone(t, 1400, 0.03, 0.12, 'square');
-    tone(t + 0.16, 900, 0.03, 0.12, 'square');
-    tone(t + 0.32, 1600, 0.04, 0.14, 'square');
-  }
-
-  function dryFire() {
-    if (!ensure()) return;
-    tone(now(), 2200, 0.03, 0.1, 'square');
-  }
-
-  function hit() {
-    if (!ensure()) return;
-    tone(now(), 2100, 0.05, 0.16, 'sine', 1500);
-  }
-
-  function kill() {
-    if (!ensure()) return;
-    const t = now();
-    tone(t, 1800, 0.06, 0.18, 'sine', 1200);
-    tone(t + 0.07, 2400, 0.08, 0.18, 'sine', 1600);
-  }
-
-  function hurt() {
-    if (!ensure()) return;
-    const t = now();
-    tone(t, 160, 0.18, 0.3, 'sawtooth', 90);
-    noise(t, 0.12, 500, 0.15);
-  }
-
-  function explosion() {
-    if (!ensure()) return;
-    const t = now();
-    noise(t, 0.9, 420, 0.7);
-    noise(t, 0.5, 2400, 0.25, 'bandpass');
-    tone(t, 90, 0.8, 0.5, 'sine', 35);
-  }
-
-  function grenadeBounce() {
-    if (!ensure()) return;
-    tone(now(), 700, 0.05, 0.1, 'triangle', 420);
-  }
-
-  function plantBeep() {
-    if (!ensure()) return;
-    tone(now(), 1250, 0.09, 0.16, 'square');
-  }
-
-  function plantDone() {
-    if (!ensure()) return;
-    const t = now();
-    tone(t, 880, 0.12, 0.18, 'square');
-    tone(t + 0.14, 1320, 0.2, 0.18, 'square');
-  }
-
-  function roundWin() {
-    if (!ensure()) return;
-    const t = now();
-    [523, 659, 784].forEach((freq, i) => tone(t + i * 0.12, freq, 0.22, 0.16, 'triangle'));
-  }
-
-  function roundLose() {
-    if (!ensure()) return;
-    const t = now();
-    [392, 330, 262].forEach((freq, i) => tone(t + i * 0.14, freq, 0.26, 0.15, 'triangle'));
-  }
-
-  function buy() {
-    if (!ensure()) return;
-    const t = now();
-    tone(t, 980, 0.06, 0.14, 'triangle');
-    tone(t + 0.07, 1470, 0.09, 0.14, 'triangle');
-  }
-
-  function deny() {
-    if (!ensure()) return;
-    tone(now(), 220, 0.12, 0.16, 'square', 160);
-  }
-
-  return {
-    unlock, shot, distantShot, reload, dryFire, hit, kill, hurt, explosion,
-    grenadeBounce, plantBeep, plantDone, roundWin, roundLose, buy, deny,
-  };
+  hit(head) { this.tone(head ? 1250 : 880, 0.07, 'sine', 0.3); }
+  hurt() { this.tone(160, 0.16, 'sawtooth', 0.3, 70); }
+  reload() { this.tone(500, 0.06, 'square', 0.14); setTimeout(() => this.tone(700, 0.06, 'square', 0.14), 140); }
+  plantBeep(final) { this.tone(final ? 1500 : 950, final ? 0.3 : 0.09, 'sine', 0.35); }
+  boom() { this.noise(0.6, 1.0, 500); this.tone(90, 0.5, 'sine', 0.5, 35); }
+  win() { [523, 659, 784].forEach((f, i) => setTimeout(() => this.tone(f, 0.22, 'triangle', 0.3), i * 130)); }
+  lose() { [392, 330, 262].forEach((f, i) => setTimeout(() => this.tone(f, 0.25, 'triangle', 0.28), i * 150)); }
+  click() { this.tone(700, 0.04, 'square', 0.15); }
+  pickup() { this.tone(660, 0.08, 'sine', 0.25); setTimeout(() => this.tone(990, 0.1, 'sine', 0.25), 80); }
 }

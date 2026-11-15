@@ -1,19 +1,58 @@
-# Cinderworks — Tactical FPS
+# Cinderworks v3 — Foundry-Yard Tactical FPS
 
-[![make.fun · threejs-fps-02](https://make.fun/badge/threejs-fps-02.svg)](https://make.fun/bounty/threejs-fps-02?utm_source=github&utm_medium=readme&utm_campaign=threejs-fps-02)
-[![rank](https://make.fun/badge/threejs-fps-02/Kivye/cinderworks-fps/rank.svg)](https://make.fun/bounty/threejs-fps-02/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=threejs-fps-02)
-[![reward](https://make.fun/badge/threejs-fps-02/Kivye/cinderworks-fps/reward.svg)](https://make.fun/bounty/threejs-fps-02?utm_source=github&utm_medium=readme&utm_campaign=threejs-fps-02)
+Original round-based tactical FPS for the make.fun threejs-fps-02 bounty.
+Single-player 5v5 vs bots, three.js 0.187.0, static files, no build step, no network.
 
-A round-based tactical first-person shooter in the style Counter-Strike made famous, built on three.js 0.187.0: two teams fight short rounds in an original foundry-yard map, won by eliminating the other crew or by planting and defending a charge — the planted charge sits in the world as a blinking ember box whose blink quickens as the fuse burns down. Money earned each round buys rifles, a marksman, a shotgun and grenades; stopping to aim pays, firing on the move does not. Single-player against six bots with routes, holds, reactions and hearing.
+## Play
 
-## Run it
+Open `game/index.html` via a static server (`node serve.ts` → http://localhost:8080)
+and click to lock the mouse.
 
-```sh
-node serve.ts
-```
+- **Objective:** plant the charge at Furnace (A) or Crane Dock (B), or eliminate the
+  defending team. Defenders win by stopping the plant, defusing, or running the clock out.
+- **Controls:** WASD move · mouse aim · click fire · R reload · E hold to plant /
+  defuse / pick up the dropped charge · G frag grenade · H smoke grenade ·
+  B buy menu (buy phase) · 1–5 switch weapon · Ctrl crouch · right-click ADS ·
+  Tab scoreboard · Shift walk slow.
+- **Economy:** $800 start, +$300 per kill, +$300 plant, +$3,250 round win,
+  loss bonus $1,900 + $500 per loss in the streak (cap $3,400). Bots buy role
+  loadouts every round (`pickBotLoadout` in `game/src/state.js`).
+- **Gunplay:** 5 weapons (pistol / SMG / shotgun / rifle / marksman) + frag + smoke,
+  deterministic per-weapon recoil tables, capsule head/body hit detection with
+  headshot multipliers, damage falloff, spread that grows while moving, ADS zoom.
+- **Bots:** 4 ally roles (carrier / entry / support / holder) + 5 defenders
+  (site holders / roamers), A* pathfinding over a waypoint graph with LOS
+  smoothing and stuck recovery, vision cones, hearing-free but smoke-blocked
+  sight, grenade throws, plant/defuse behaviour, short team comms.
+- **HUD:** health, armour, ammo, round timer, score, money, weapon slots,
+  live minimap (drawn from the real colliders/waypoints), killfeed, hurt-direction
+  indicator, plant/defuse progress, buy menu, match-end scoreboard.
+- **Map:** bright daylight foundry yard — 3 lanes, 2 sites, procedural canvas
+  textures (brick / concrete / metal / hazard strips), giant A/B site decals,
+  furnace glow, crane, work lamps.
 
-Then open http://localhost:8080 in desktop Chrome. Click to play: WASD to move, mouse to look, click to fire, R to reload, G for a grenade, E to plant the charge, B to shop between rounds.
+## Layout
 
----
+- `main.ts` — entrypoint: copies `game/` + `screenshots/` to the output dir and
+  writes `dossier.json` via `vendor/makefun-threejs.ts`.
+- `game/index.html` — single import map (`three` → vendored three.module.min.js).
+- `game/src/main.js` — bootstrap, fixed-step (60 Hz) sim separate from render.
+- `game/src/state.js` — state, weapons, recoil tables, roles, economy.
+- `game/src/weapons.js` — ray-vs-capsule hits, falloff, grenade flight.
+- `game/src/nav.js` — A*, LOS smoothing, stuck recovery.
+- `game/src/bots.js` — bot AI: roles, vision, bursts, plant/defuse.
+- `game/src/world.js` — map, colliders, waypoint graph, props, lights.
+- `game/src/textures.js` — procedural canvas textures + name tags.
+- `game/src/hud.js` — DOM HUD, minimap, buy menu, scoreboard.
+- `game/src/audio.js` — WebAudio synth SFX (no audio files).
+- `game/vendor/three/` — three.js 0.187.0, byte-identical to the kit.
 
-<sub>Entered on [make.fun](https://make.fun/?ref=r951qv42&utm_source=github&utm_medium=readme&utm_campaign=threejs-fps-02) · AI agents build software for cash rewards</sub>
+## Screenshots
+
+`?shot=start|play|plant|end&seed=7` stages the four shots (buy phase, open fight,
+planted charge, match-end scoreboard); `window.__game` exposes live state for
+headless playtests.
+
+## License
+
+MIT — see `LICENSE`.
