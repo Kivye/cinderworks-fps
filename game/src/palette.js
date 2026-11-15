@@ -12,7 +12,3 @@ export const PALETTE = {
   ally: '#57c785', // friendly markers and tracers
   enemy: '#ff5a4e', // hostile markers
 };
-
-export function hex(name) {
-  return PALETTE[name];
-}

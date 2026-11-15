@@ -2,8 +2,8 @@
 // at the display's rate; rendering never touches simulation state. The state
 // object is the single place every module reads from: time, the world, the
 // player, the bots, the match, the charge, and the event queue the loop drains
-// once per step. ?shot=start|play|end with &seed=N stages a deterministic frame
-// for a capture, renders it twice, freezes it and sets window.__shotReady.
+// once per step. ?shot=start|play|plant|end with &seed=N stages a deterministic
+// frame for a capture, renders it twice, freezes it and sets window.__shotReady.
 import * as THREE from 'three';
 import { PALETTE } from './palette.js';
 import { mulberry32 } from './rng.js';
@@ -30,16 +30,16 @@ renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-// ACES tone mapping with a slight exposure lift: the foundry palette is dark
+// ACES tone mapping with a real exposure lift: the foundry palette is dark
 // browns and oranges, and the extra headroom keeps shadowed lanes readable
 // at a glance instead of crushing them to black.
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.18;
+renderer.toneMappingExposure = 1.38;
 document.getElementById('game').appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(PALETTE.canvas);
-scene.fog = new THREE.Fog(new THREE.Color(PALETTE.canvas), 22, 60);
+scene.fog = new THREE.Fog(new THREE.Color(PALETTE.canvas), 30, 90);
 const camera = new THREE.PerspectiveCamera(74, window.innerWidth / window.innerHeight, 0.05, 160);
 scene.add(camera);
 
@@ -50,6 +50,48 @@ const hud = createHud();
 const audio = createAudio();
 const effects = createEffects(scene);
 const viewModel = createViewModel(camera);
+
+// The planted charge as a scene prop: a squat ember-cored box that sits where
+// rounds.js says the charge lies and blinks faster as the fuse burns down, so
+// the objective reads in the world and not only in the HUD line. Purely
+// visual — the match and the bots read charge state, never this mesh. Both
+// materials are made once here; the hot loop only moves the group and sets
+// the core's emissive intensity.
+const chargeProp = new THREE.Group();
+const chargeBase = new THREE.Mesh(
+  new THREE.BoxGeometry(0.52, 0.2, 0.36),
+  new THREE.MeshStandardMaterial({ color: new THREE.Color(PALETTE.hairline), roughness: 0.7, metalness: 0.2 }),
+);
+chargeBase.position.y = 0.1;
+chargeBase.castShadow = true;
+const chargeCore = new THREE.Mesh(
+  new THREE.BoxGeometry(0.3, 0.08, 0.2),
+  new THREE.MeshStandardMaterial({
+    color: new THREE.Color(PALETTE.danger),
+    emissive: new THREE.Color(PALETTE.danger),
+    emissiveIntensity: 0.4,
+    roughness: 0.4,
+  }),
+);
+chargeCore.position.y = 0.24;
+chargeProp.add(chargeBase, chargeCore);
+chargeProp.visible = false;
+scene.add(chargeProp);
+
+function syncChargeProp() {
+  const charge = state.match.charge;
+  if (charge.state !== 'planted') {
+    chargeProp.visible = false;
+    return;
+  }
+  chargeProp.visible = true;
+  chargeProp.position.set(charge.pos.x, 0, charge.pos.z);
+  // Two pulses a second while the fuse is long, four a second inside the
+  // last ten seconds: the blink itself carries the urgency.
+  const rate = charge.fuseLeft < 10 ? 4 : 2;
+  const on = (state.time * rate) % 1 < 0.55;
+  chargeCore.material.emissiveIntensity = on ? 2.6 : 0.25;
+}
 const raycaster = new THREE.Raycaster();
 raycaster.far = 90;
 
@@ -96,6 +138,10 @@ let accumulator = 0;
 let lastTime = performance.now();
 let fov = 74;
 let buyOpen = false;
+// Whether the player has entered the game once (Play clicked / pointer
+// locked). Read by the lock-change and Play handlers below; it must be
+// declared — in a module's strict mode the bare assignment throws.
+let started = false;
 
 function currentGun() {
   return player.guns[player.currentGun];
@@ -288,6 +334,7 @@ function step(dt) {
   stepEffects(state, dt);
   drainEvents();
   syncHud();
+  syncChargeProp();
 }
 
 function refreshBuy() {
@@ -393,42 +440,78 @@ function runShot(name) {
     buyOpen = true;
     refreshBuy();
     settle(30);
-    aimAtPoint(0, 1.4, -6);
+    aimAtPoint(-8, 1.6, -13);
   } else if (name === 'play') {
-    // Round 2, rifle bought, mid-fight down the long lane: the player has a
-    // clear sightline to two enemies pushing from site A.
+    // Round 2, rifle bought, open fight down Long lane: two Slag push the
+    // lane toward site A with the furnace glow behind them, a teammate
+    // advances on the right, and the player's shot is already away — tracer,
+    // muzzle flash and recoil all in the frame.
     state.match.money = 4500;
     buyItem(state, 'rifle');
     state.match.round = 2;
     startRound(state);
     state.match.phase = 'live';
     state.match.phaseTime = 20;
-    playerBody.position.set(-19.5, 0, 6);
+    playerBody.position.set(-12.8, 0, -6.8);
     playerBody.yaw = 0;
     playerBody.pitch = 0.01;
     settle(40);
     hud.hideBanner();
     // Stage the fight AFTER the settle: bots walk their holds during it, so
     // positions set before would have drifted by the time the shot fires.
+    // The fight is staged inside site A itself — the one open stage where
+    // the furnace glow backlights both Slag, a Cinder teammate already
+    // holds the furnace side, and no wall mass eats the frame.
     const enemy = slagBots[0];
-    enemy.body.position.set(-19, 0, -6.5);
+    enemy.body.position.set(-16.8, 0, -10.5);
     enemy.body.yaw = Math.PI;
     enemy.body.velocity.set(0, 0, 0);
     const enemy2 = slagBots[1];
-    enemy2.body.position.set(-14, 0, -9);
-    enemy2.body.yaw = Math.PI * 0.8;
+    enemy2.body.position.set(-18.5, 0, -6);
+    enemy2.body.yaw = Math.PI * 0.85;
     enemy2.body.velocity.set(0, 0, 0);
     const ally = cinderBots[0];
-    ally.body.position.set(-16, 0, 2);
+    ally.body.position.set(-15.8, 0, -13.8);
     ally.body.yaw = 0;
     ally.body.velocity.set(0, 0, 0);
     // The capture stages a healthy player mid-fight, whatever the bots did
     // during the settle.
     playerBody.health = 100;
-    aimAtPoint(-19, 1.2, -6.5);
+    aimAtPoint(-16.8, 1.2, -10.5);
     const gun = currentGun();
     if (gun.fire()) playerShoot(state, gun);
     viewModel.trigger();
+    // Four steps on: the muzzle flash (a flat quad) has burned off, the
+    // tracer is down to a thread, and the impact sparks are still alive —
+    // the frame keeps the shot's evidence without the flash quad's slab.
+    settle(4);
+  } else if (name === 'plant') {
+    // Round 2, the charge is down at Furnace (A): planted through the real
+    // plantCharge path, then the player falls back inside the site and
+    // covers the blinking charge while two Slag converge from Long lane to
+    // defuse it. The HUD carries the planted line and the fuse timer.
+    state.match.money = 4500;
+    buyItem(state, 'rifle');
+    state.match.round = 2;
+    startRound(state);
+    state.match.phase = 'live';
+    playerBody.position.set(-14.6, 0, -10.6);
+    plantCharge(state, 'A', player);
+    settle(6);
+    // Stage the defence AFTER the settle, like the play shot: the plant
+    // makes every defender converge, so positions are set once they react.
+    playerBody.position.set(-11.2, 0, -11.4);
+    playerBody.velocity.set(0, 0, 0);
+    const pusher = slagBots[0];
+    pusher.body.position.set(-17.6, 0, -8.2);
+    pusher.body.yaw = Math.PI;
+    pusher.body.velocity.set(0, 0, 0);
+    const second = slagBots[1];
+    second.body.position.set(-19.5, 0, -5.5);
+    second.body.yaw = Math.PI;
+    second.body.velocity.set(0, 0, 0);
+    playerBody.health = 100;
+    aimAtPoint(-17.6, 1.15, -8.2);
     settle(1);
   } else {
     // Round won at site A: charge detonated, two Slag down, banner up. The
@@ -452,11 +535,12 @@ function runShot(name) {
     slagBots[1].mesh.group.rotation.x = -Math.PI / 2;
     hud.banner('ROUND WON', 'Slag crew wiped  ·  1 — 0', 60000);
     settle(20);
-    aimAtPoint(-14.5, 1.0, -11.5);
+    aimAtPoint(-15, 1.1, -12);
   }
-  hud.setAmmo(currentGun().state.mag, currentGun().state.reserve);
-  hud.setHealth(Math.ceil(playerBody.health), Math.ceil(playerBody.armor));
-  hud.setMoney(state.match.money);
+  // The tail paints the HUD the way a live frame does — syncHud reads the
+  // staged state (timer, bomb line, hint, crosshair) instead of the capture
+  // restating it by hand.
+  syncHud();
   hud.setScore(state.match.score.cinder, state.match.score.slag);
   hud.setRound(`ROUND ${state.match.round}`);
   paintTwiceThenReady();

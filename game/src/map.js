@@ -179,9 +179,21 @@ export function createWorld(scene) {
     group.add(frame);
   }
 
+  // Crane Dock work light: site B gets the same at-a-glance read as the
+  // furnace — an ember lamp slab on the crane leg and its pool of light.
+  const dockLamp = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.18, 0.12), glowMaterial);
+  dockLamp.position.set(18.5, 4.5, -11.84);
+  group.add(dockLamp);
+  const dockGlow = new THREE.PointLight(new THREE.Color(PALETTE.accent), 20, 15, 1.8);
+  dockGlow.position.set(18.5, 4.0, -10.9);
+  scene.add(dockGlow);
+
   // Light: low ember sun from the west, cool sky fill, and a warm hemisphere.
-  scene.add(new THREE.HemisphereLight(new THREE.Color('#8a7a68'), new THREE.Color(PALETTE.canvas), 1.22));
-  const sun = new THREE.DirectionalLight(new THREE.Color('#ffb066'), 2.7);
+  // The hemisphere's ground colour is a lifted warm brown, not the page
+  // background: faces turned away from the sun take the bounce of the yard
+  // floor, so shadowed lanes stay readable instead of crushing to black.
+  scene.add(new THREE.HemisphereLight(new THREE.Color('#9a8468'), new THREE.Color('#4a3826'), 1.7));
+  const sun = new THREE.DirectionalLight(new THREE.Color('#ffb066'), 3.2);
   sun.position.set(-16, 18, 10);
   sun.target.position.set(0, 0, -4);
   sun.castShadow = true;
@@ -193,7 +205,7 @@ export function createWorld(scene) {
   sun.shadow.camera.far = 60;
   sun.shadow.bias = -0.0006;
   scene.add(sun, sun.target);
-  const fill = new THREE.DirectionalLight(new THREE.Color('#7d8aa0'), 0.65);
+  const fill = new THREE.DirectionalLight(new THREE.Color('#7d8aa0'), 0.95);
   fill.position.set(12, 10, -14);
   scene.add(fill);
 
